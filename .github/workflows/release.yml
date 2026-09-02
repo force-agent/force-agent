@@ -1,0 +1,229 @@
+name: release
+
+# force-agent overlay: the distribution pipeline for the `force-agent` npm package.
+#
+# Upstream's publish.yml releases twelve targets, desktop builds and an S3 update
+# service on branch pushes. This one does exactly one job on a `v*` tag: build the
+# four published targets, prove the rebrand survived, and push the platform
+# packages to npm BEFORE the root package that optionally depends on them. That
+# order is not cosmetic - `force-agent@<version>` is installable the instant it
+# appears in the registry, and if its optionalDependencies are not resolvable yet
+# the install silently produces a command with no binary behind it.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (defaults to the tag without its leading v)"
+        required: false
+        type: string
+      dry-run:
+        description: "Build and verify, but pass --dry-run to npm publish"
+        required: false
+        default: true
+        type: boolean
+
+concurrency: release-${{ github.ref }}
+
+permissions:
+  contents: read
+
+env:
+  # Publishing a tag is always a stable release; Script.version then trusts
+  # OPENCODE_VERSION verbatim instead of deriving a preview build number from
+  # the branch name.
+  OPENCODE_CHANNEL: latest
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      dry-run: ${{ steps.resolve.outputs.dry-run }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then version="${GITHUB_REF_NAME#v}"; fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Refusing to publish version '$version': not semver" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dry-run=${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || false }}" >> "$GITHUB_OUTPUT"
+          echo "publishing $version" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        # Every target the root package promises, and the same four slugs
+        # packages/cli/bin/force.cjs resolves. Bun cross-compiles all of them
+        # from one Linux runner, so there is no per-OS runner matrix to keep in sync.
+        target:
+          - force-linux-x64
+          - force-linux-arm64
+          - force-darwin-arm64
+          - force-windows-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build ${{ matrix.target }}
+        run: bun run packages/cli/script/build.ts --target=${{ matrix.target }}
+        env:
+          OPENCODE_VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Upload ${{ matrix.target }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: packages/cli/dist/cli-*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download platform builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-force-*
+          merge-multiple: true
+          path: packages/cli/dist
+
+      - name: Restore the executable bit
+        # actions/upload-artifact stores a zip without POSIX modes, so every file
+        # comes back 0644. npm packs whatever mode it finds on disk, and a
+        # non-executable binary is an install that cannot run.
+        run: |
+          set -euo pipefail
+          chmod 755 packages/cli/dist/cli-*/bin/*
+
+      - name: Assemble the root package
+        # Fails if any of the four platform builds is missing, so a partial matrix
+        # can never produce a root package that promises a target it did not build.
+        run: bun run packages/cli/script/dist-package.ts
+        env:
+          OPENCODE_VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Verify the rebrand survived
+        # The regression gate. It asserts the fork's identity constants in source
+        # (the XDG app name, the compiled binary name, the FORCE_AGENT_* env prefix
+        # and the LABFY_*/POWER_*/OPENCODE_* fallbacks it must keep honoring, the
+        # npm scope), that every platform package is @force-agent scoped and pins
+        # one os and one cpu, that each binary carries the force user agent,
+        # and that the root package names no @opencode-ai package and no opencode2
+        # command. An upstream merge that reverts any of those lines fails here.
+        run: bun run packages/cli/script/verify-rebrand.ts packages/cli/dist
+
+      - name: Verify the artifacts
+        run: |
+          set -euo pipefail
+          for directory in packages/cli/dist/cli-*; do
+            bun run packages/cli/script/verify-artifact.ts "$directory"
+          done
+
+      - name: Verify the version stamp
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ needs.version.outputs.version }}"
+          for manifest in packages/cli/dist/*/package.json; do
+            actual="$(node -p "require('./$manifest').version")"
+            if [ "$actual" != "$expected" ]; then
+              echo "$manifest is version $actual, expected $expected" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish the platform packages
+        # These go first, one at a time. The root package's optionalDependencies
+        # are exact pins; if any of these is missing when the root lands, an
+        # install on that platform yields a command with nothing to run.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ needs.version.outputs.dry-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in packages/cli/dist/cli-*; do
+            name="$(node -p "require('./$directory/package.json').name")"
+            echo "publishing $name"
+            if [ "$DRY_RUN" = "true" ]; then
+              npm publish "$directory" --access public --tag latest --dry-run
+            else
+              npm publish "$directory" --access public --tag latest
+            fi
+          done
+
+      - name: Wait for the platform packages to resolve
+        # npm serves reads through a cache; a package can 404 for a few seconds
+        # after a successful publish. The root must not appear before they answer.
+        if: needs.version.outputs.dry-run != 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in packages/cli/dist/cli-*; do
+            name="$(node -p "require('./$directory/package.json').name")"
+            resolved=""
+            for attempt in $(seq 1 30); do
+              if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+                resolved="yes"
+                echo "$name@$VERSION is resolvable"
+                break
+              fi
+              sleep 10
+            done
+            if [ -z "$resolved" ]; then
+              echo "$name@$VERSION never became resolvable" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish force-agent
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ needs.version.outputs.dry-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            npm publish packages/cli/dist/force-agent --access public --tag latest --dry-run
+          else
+            npm publish packages/cli/dist/force-agent --access public --tag latest
+          fi
+
+      - name: Smoke test what was published
+        if: needs.version.outputs.dry-run != 'true'
+        # The contract, exercised the way a user meets it. --ignore-scripts is the
+        # point: it proves the runtime shim finds the binary with no postinstall.
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="$(mktemp -d)"
+          npm install --prefix "$directory" --ignore-scripts --no-audit --no-fund "force-agent@$VERSION"
+          "$directory/node_modules/.bin/force" --version

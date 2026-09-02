@@ -1,0 +1,200 @@
+import { Database } from "@opencode-ai/core/database/database"
+import { V1Migration } from "@opencode-ai/core/database/v1-migration"
+import { App } from "@opencode-ai/core/app"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
+import { httpClient } from "@opencode-ai/util/effect/app-node-platform"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { Bus } from "@opencode-ai/core/bus"
+import { EventLogger } from "@opencode-ai/core/event-logger"
+import { FileSystemSearch } from "@opencode-ai/core/filesystem/search"
+import { Credential } from "@opencode-ai/core/credential"
+import { Routine } from "@opencode-ai/core/routine"
+import { Config } from "@opencode-ai/core/config"
+import { PermissionSaved } from "@opencode-ai/core/permission/saved"
+import { PtyTicket } from "@opencode-ai/core/pty/ticket"
+import { BrowserTicket } from "@opencode-ai/core/browser/ticket"
+import { PersistentPty } from "@opencode-ai/core/persistent-pty"
+import { Project } from "@opencode-ai/core/project"
+import { Session } from "@opencode-ai/core/session"
+import { SessionTransfer } from "@opencode-ai/core/session/transfer"
+import { ShellSelect } from "@opencode-ai/core/shell/select"
+import { Job } from "@opencode-ai/core/job"
+import { Mcp } from "@opencode-ai/core/mcp/index"
+import { Global } from "@opencode-ai/util/global"
+import { InstructionDiscovery } from "@opencode-ai/core/instruction-discovery"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { LocationActivity } from "@opencode-ai/core/location-activity"
+import { ModelsDev } from "@opencode-ai/core/models-dev"
+import { SelfUpdate } from "@opencode-ai/core/self-update"
+import { SessionRestart } from "@opencode-ai/core/session/execution/restart"
+import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
+import { SdkPlugins } from "@opencode-ai/core/plugin/sdk"
+import { WellKnown } from "@opencode-ai/core/wellknown"
+import { Workspace } from "@opencode-ai/core/workspace"
+import { Worktree } from "@opencode-ai/core/worktree"
+import { Watcher } from "@opencode-ai/core/filesystem/watcher"
+import { HttpRouter } from "effect/unstable/http"
+import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { Context, Effect, Layer, Option } from "effect"
+import { Api } from "./api"
+import { ServerAuth } from "./auth"
+import { handlers } from "./handlers"
+import { InProcess } from "./in-process"
+import { authorizationLayer } from "./middleware/authorization"
+import { schemaErrorLayer } from "./middleware/schema-error"
+import { PtyEnvironment } from "./pty-environment"
+import { layer } from "./location"
+import { formLocationLayer } from "./middleware/form-location"
+import { sessionLocationLayer } from "./middleware/session-location"
+import { ServerInfo } from "./server-info"
+import type { ServerOptions } from "./options"
+
+const applicationServiceNodes = [
+  Global.node,
+  Database.node,
+  Bus.node,
+  EventLogger.node,
+  httpClient,
+  Job.node,
+  Project.node,
+  Worktree.node,
+  Session.node,
+  SessionTransfer.node,
+  PluginRuntime.providerNode,
+  SdkPlugins.node,
+  PermissionSaved.node,
+  PtyTicket.node,
+  BrowserTicket.node,
+  PersistentPty.node,
+  Credential.node,
+  Routine.node,
+  WellKnown.node,
+  PtyEnvironment.node,
+  LocationServiceMap.node,
+  LocationActivity.node,
+  SessionRestart.node,
+  SelfUpdate.node,
+  Workspace.node,
+] as const
+const applicationServices = LayerNode.group(applicationServiceNodes)
+
+/**
+ * The route graph for a listener that accepts requests off a socket.
+ *
+ * power-agent overlay: upstream fell back to an unauthenticated route graph when
+ * `options.password` was absent, so forgetting to thread a password through
+ * produced a working server with no auth. There is no such fallback now — a
+ * missing password is a defect, raised where the layer is built. A caller that
+ * owns the handler in-process mints a grant and uses `createEmbeddedRoutes`.
+ */
+export function createRoutes(
+  options: ServerOptions = {},
+  serviceURLs: () => ReadonlyArray<string> = () => [],
+  overrides: LayerNode.Replacements = [],
+) {
+  return makeRoutes(authLayer(options.password), options, serviceURLs, overrides)
+}
+
+/**
+ * The route graph for a caller that holds the handler directly — no socket, no
+ * listener. It is authenticated exactly like the network graph: the credential
+ * is the one minted with the {@link InProcess.Grant}, and the owner stamps it
+ * onto every request (see `InProcess.authorize`).
+ */
+export function createEmbeddedRoutes(
+  grant: InProcess.Grant,
+  options: ServerOptions = {},
+  overrides: LayerNode.Replacements = [],
+) {
+  return makeRoutes(authLayer(grant.password), options, () => [], overrides)
+}
+
+function authLayer(password: string | undefined) {
+  // power-agent overlay: `usable` rather than truthiness. A password of "   "
+  // is not a credential, and an embedder calling start()/createRoutes() directly
+  // never passes through the CLI check that would have caught it.
+  if (ServerAuth.usable(password)) return ServerAuth.Config.configLayer({ password: Option.some(password) })
+  return Layer.effect(
+    ServerAuth.Config,
+    Effect.die(
+      new Error(
+        "Refusing to build server routes without a password. Pass ServerOptions.password, or mint an InProcess.grant() and use createEmbeddedRoutes for a caller that owns the handler.",
+      ),
+    ),
+  )
+}
+
+function makeRoutes<AuthError, AuthServices>(
+  auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>,
+  options: ServerOptions,
+  serviceURLs: () => ReadonlyArray<string>,
+  // Runtime-profile replacements (e.g. workerd) applied after the standard set, so later entries win.
+  overrides: LayerNode.Replacements,
+) {
+  const pluginRuntimeCell = PluginRuntime.makeCell()
+  const standard: LayerNode.Replacements = [
+    [Database.node, Database.configured(options.database)],
+    [PersistentPty.node, PersistentPty.configured(options.pty)],
+    [Bus.node, Bus.configured({ persist: options.events?.persist })],
+    [App.node, App.configured(options.app)],
+    [ModelsDev.node, ModelsDev.configured(options.models)],
+    [Watcher.node, Watcher.configured({ enabled: options.fs?.filewatcher })],
+    [FileSystemSearch.node, FileSystemSearch.configured({ fff: options.fs?.fff })],
+    [Global.node, Global.layerWith(options.config?.directory ? { config: options.config.directory } : {})],
+    [
+      Config.node,
+      Config.configured({
+        project: options.config?.project,
+        file: options.config?.file,
+        content: options.config?.content,
+      }),
+    ],
+    [InstructionDiscovery.node, InstructionDiscovery.configured({ project: options.config?.project })],
+    [ShellSelect.node, ShellSelect.configured({ gitbash: options.windows?.gitbash })],
+    [
+      Mcp.node,
+      Mcp.configured({
+        clientInfo: {
+          name: options.app?.name ?? "opencode",
+          version: options.app?.version ?? "unknown",
+        },
+      }),
+    ],
+    [PluginRuntime.node, PluginRuntime.layerWithCell(pluginRuntimeCell)],
+    [PluginRuntime.providerNode, PluginRuntime.providerNodeWithCell(pluginRuntimeCell)],
+  ]
+  const replacements: LayerNode.Replacements = [...standard, ...overrides]
+  const serviceLayer = options.simulation
+    ? Layer.unwrap(
+        Effect.gen(function* () {
+          const { simulationReplacements } = yield* Effect.promise(() => import("@opencode-ai/simulation/backend"))
+          const simulation = yield* simulationReplacements({ version: App.make(options.app).version })
+          return AppNodeBuilder.build(applicationServices, [...replacements, ...simulation])
+        }),
+      )
+    : AppNodeBuilder.build(applicationServices, replacements)
+  return serviceLayer.pipe(
+    Layer.flatMap((context) => {
+      const services = Layer.succeedContext(context)
+      const requestServices = Layer.merge(
+        Layer.succeedContext(
+          Context.pick(Database.Service, PermissionSaved.Service, Project.Service, WellKnown.Service)(context),
+        ),
+        ServerInfo.layer(serviceURLs, options.app),
+      )
+      const api = HttpApiBuilder.layer(Api, { openapiPath: "/openapi.json" }).pipe(
+        Layer.provide(handlers.pipe(Layer.provide(services))),
+        Layer.provide(formLocationLayer),
+        Layer.provide(sessionLocationLayer),
+        Layer.provide(layer),
+        Layer.provide(authorizationLayer),
+        Layer.provide(schemaErrorLayer),
+        Layer.provide(auth),
+        HttpRouter.provideRequest(requestServices),
+        Layer.provideMerge(services),
+        Layer.provideMerge(HttpRouter.layer),
+      )
+      return Layer.merge(api, V1Migration.layer.pipe(Layer.provide(services)))
+    }),
+  )
+}

@@ -1,0 +1,272 @@
+@property --session-neon-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.session-sidebar-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--v2-text-text-muted);
+  font-size: 12px;
+}
+
+.session-sidebar-item:hover {
+  background: var(--v2-overlay-simple-overlay-hover);
+  color: var(--v2-text-text-base);
+}
+
+/* USED: loaded earlier in this session — steady subtle glow. Green = on (success tokens), for skills and tool chips alike. */
+.session-sidebar-item[data-usage="used"] {
+  border-color: var(--v2-state-border-success);
+  color: var(--v2-text-text-base);
+  box-shadow: 0 0 6px color-mix(in oklab, var(--v2-state-fg-success) 25%, transparent);
+}
+
+/* ACTIVE: executing right now — neon ring travelling around the border. */
+.session-sidebar-item[data-usage="active"] {
+  color: var(--v2-text-text-base);
+}
+
+.session-sidebar-item[data-usage="active"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--session-neon-angle),
+    transparent 0deg 240deg,
+    var(--v2-state-fg-success) 280deg 320deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px var(--v2-state-fg-success));
+  animation: session-neon-rotate 2.4s linear infinite;
+}
+
+.session-sidebar-item[data-usage="active"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--session-neon-angle),
+    transparent 0deg 240deg,
+    var(--v2-state-fg-success) 280deg 320deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  filter: blur(6px);
+  opacity: 0.6;
+  animation:
+    session-neon-rotate 2.4s linear infinite,
+    session-neon-pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes session-neon-rotate {
+  to {
+    --session-neon-angle: 360deg;
+  }
+}
+
+@keyframes session-neon-pulse {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 0.8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-sidebar-item[data-usage="active"]::before,
+  .session-sidebar-item[data-usage="active"]::after {
+    animation: none;
+    /* Solid static ring instead of the travelling arc. */
+    background: conic-gradient(var(--v2-state-fg-success), var(--v2-state-fg-success));
+  }
+}
+
+/* Small trailing dot: a second cue besides the border so a frozen list still shows what just lit up. */
+.session-sidebar-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--v2-state-border-success);
+}
+
+.session-sidebar-dot[data-usage="active"] {
+  background: var(--v2-state-fg-success);
+  box-shadow: 0 0 6px var(--v2-state-fg-success);
+  animation: session-neon-pulse 1.2s ease-in-out infinite alternate;
+}
+
+.session-agent-dot-running {
+  animation: session-neon-pulse 1.2s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-sidebar-item[data-usage="active"]::before,
+  .session-sidebar-item[data-usage="active"]::after,
+  .session-sidebar-dot[data-usage="active"],
+  .session-agent-dot-running {
+    animation: none;
+  }
+}
+
+/* Channel chips on a Tools row: mcp · key (API key) · terminal (CLI) icons. Fill = availability, glow = used in this session. */
+.session-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--v2-border-border-weaker-base);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+  background: transparent;
+}
+
+.session-tool-chip > svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+/* Not configured: dashed border as well as dimmed, so the state does not rest on colour alone (line-through does nothing to an SVG). */
+.session-tool-chip[data-status="none"] {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.session-tool-chip[data-status="on"] {
+  color: var(--v2-text-text-base);
+  border-color: var(--v2-border-border-weak-base);
+  background: var(--v2-background-bg-layer-01);
+}
+
+.session-tool-chip[data-status="warn"] {
+  color: var(--v2-state-border-warning);
+  border-color: var(--v2-state-border-warning);
+}
+
+.session-tool-chip[data-usage="used"] {
+  border-color: var(--v2-state-border-success);
+  box-shadow: 0 0 5px color-mix(in oklab, var(--v2-state-fg-success) 30%, transparent);
+}
+
+.session-tool-chip[data-usage="active"] {
+  color: var(--v2-state-fg-success);
+  border-color: var(--v2-state-fg-success);
+  box-shadow: 0 0 6px var(--v2-state-fg-success);
+  animation: session-neon-pulse 1.2s ease-in-out infinite alternate;
+}
+
+/*
+ * Section lists share the panel instead of scrolling it. Each list is a scroll
+ * container of 3 to 10 rows (24px each); with room, every list shows up to 10,
+ * and when the panel is short the lists shrink together — so Tools and
+ * Routines stay on screen under 85 skills, and the panel itself never scrolls.
+ * The min-height chain (section › body › list) is what lets a section shrink
+ * below its content; the browser preview has no list and keeps its height.
+ */
+[data-slot="session-extensions"][data-mode="full"] > [data-section]:has([data-slot="session-sidebar-list"]) {
+  min-height: 0;
+}
+
+[data-slot="session-extensions"][data-mode="full"] [data-slot="session-sidebar-list"] {
+  flex: 1 1 auto;
+  min-height: calc(3 * 24px);
+  max-height: calc(10 * 24px);
+  overflow-y: auto;
+}
+
+/* Tool rows are 26px (chips), so the 3–10 row window follows them. */
+[data-slot="session-extensions"][data-mode="full"] [data-section="tools"] [data-slot="session-sidebar-list"] {
+  min-height: calc(3 * 26px);
+  max-height: calc(10 * 26px);
+}
+
+.session-sidebar-item[data-pressed] {
+  background: var(--v2-overlay-simple-overlay-pressed);
+}
+
+/* Routines: next-run label gives way to the hover actions (switch + run now). */
+.session-sidebar-routine {
+  cursor: pointer;
+}
+
+.session-sidebar-routine-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.session-sidebar-routine:hover .session-sidebar-routine-actions,
+.session-sidebar-routine:focus-within .session-sidebar-routine-actions {
+  display: flex;
+}
+
+.session-sidebar-routine:hover .session-sidebar-routine-next,
+.session-sidebar-routine:focus-within .session-sidebar-routine-next {
+  display: none;
+}
+
+.session-sidebar-routine:not([data-enabled]) {
+  color: var(--v2-text-text-faint);
+}
+
+.session-sidebar-routine-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--v2-text-text-faint);
+}
+
+.session-sidebar-routine-dot[data-status="success"] {
+  background: var(--v2-state-border-success, #3fb950);
+}
+
+.session-sidebar-routine-dot[data-status="error"] {
+  background: var(--v2-state-border-danger, #f85149);
+}
+
+.session-sidebar-routine-dot[data-status="missed"],
+.session-sidebar-routine-dot[data-status="cancelled"] {
+  background: var(--v2-state-border-warning, #d29922);
+}
+
+.session-sidebar-routine-dot[data-status="running"] {
+  background: var(--v2-icon-icon-accent);
+  box-shadow: 0 0 6px var(--v2-icon-icon-accent);
+}

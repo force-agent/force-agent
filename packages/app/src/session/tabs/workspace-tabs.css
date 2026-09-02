@@ -1,0 +1,59 @@
+/*
+  `variant="surface"` renders as data-component="tabs" + data-variant="pill";
+  the previous rules targeted the v2 component and matched nothing, which is why
+  the bar showed a square grey list box with 32px pills spilling out of a 36px
+  frame.
+
+  The vocabulary below is taken from the surfaces this bar sits next to: the
+  "New session" row in shell/sidebar/nav-sidebar.tsx (h-7 = 28px, rounded-[6px],
+  overlay-hover / overlay-pressed states) and the chat card / right-hand agent
+  strip (one bg-base surface, an elevation token, no border).
+*/
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"] [data-slot="tabs-list"] {
+  height: 100%;
+  padding: 4px;
+  gap: 4px;
+  align-items: center;
+  background-color: transparent;
+  overflow-x: auto;
+}
+
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"] [data-slot="tabs-list"]::after {
+  display: none;
+}
+
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"] [data-slot="tabs-trigger-wrapper"] {
+  height: 28px;
+  border-radius: 6px;
+  background-color: transparent;
+  color: var(--v2-text-text-muted);
+}
+
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"] [data-slot="tabs-trigger"] {
+  height: 100%;
+  padding: 0 11px;
+  border-radius: 6px;
+  /* Declared, not inherited: it happened to match the neighbouring button's 13px,
+     and a change over there would have resized these tabs without anyone noticing. */
+  font-size: var(--font-size-small);
+  font-weight: 530;
+  letter-spacing: -0.04px;
+}
+
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"]
+  [data-slot="tabs-trigger-wrapper"]:hover:not(:disabled):not(:has([data-selected])) {
+  background-color: var(--v2-overlay-simple-overlay-hover);
+  color: var(--v2-text-text-base);
+}
+
+[data-scope="session-workspace"][data-component="tabs"][data-variant="pill"]
+  [data-slot="tabs-trigger-wrapper"]:has([data-selected]) {
+  background-color: var(--v2-background-bg-button-neutral);
+  box-shadow: var(--v2-elevation-button-neutral);
+  color: var(--v2-text-text-base);
+}
+
+/* Ensure overflow handling for many tabs */
+[data-slot="session-workspace-tabs-bar"] [data-component="tabs"] {
+  overflow: clip;
+}

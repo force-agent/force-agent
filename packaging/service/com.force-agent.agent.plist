@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  force-agent overlay: launchd LaunchAgent template.
+
+  @BIN@ is replaced by install.sh with the absolute path of the force
+  executable. launchd, like systemd, will not search PATH.
+
+  `serve` in service mode runs in the foreground and registers itself as the background
+  service, so launchd supervises the real process. KeepAlive/SuccessfulExit=false
+  is the launchd spelling of "restart only on failure": a clean exit means the
+  service was stopped on purpose, or another instance already owns the port.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.force-agent.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>@BIN@</string>
+      <string>serve</string>
+      <string>--service</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>@LOG@/force-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG@/force-agent.err.log</string>
+  </dict>
+</plist>

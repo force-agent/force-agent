@@ -1,0 +1,37 @@
+# force-agent overlay: systemd *user* unit template.
+#
+# @BIN@ is replaced by install.sh with the absolute path of the force
+# executable, because systemd requires an absolute ExecStart and does not search
+# PATH.
+#
+# `serve --service` runs the server in the FOREGROUND and registers itself as the
+# background service, so systemd supervises the real process. Do not use
+# `service start` here: that spawns a detached child and returns, which would
+# leave systemd supervising a process that has already exited.
+#
+# A clean exit is meaningful: it means either `force service stop` was run,
+# or another instance already owns the port. Neither is a failure, so Restart is
+# on-failure rather than always - always would turn "someone else owns it" into a
+# restart loop.
+
+[Unit]
+Description=force agent background service
+Documentation=https://github.com/anomalyco/opencode
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@BIN@ serve --service
+ExecStop=@BIN@ service stop
+Restart=on-failure
+RestartSec=5
+# The service binds 127.0.0.1 and mints its own credential; it needs no console.
+StandardOutput=journal
+StandardError=journal
+# Long-running agent work must not be killed by a short stop timeout.
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

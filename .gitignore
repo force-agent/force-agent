@@ -1,0 +1,50 @@
+.DS_Store
+node_modules
+.worktrees
+.sst
+.env
+.env.local
+.idea
+.vscode
+.codex
+*~
+playground
+tmp
+dist
+dist-node
+ts-dist
+.turbo
+.typecheck-profiles
+**/.serena
+.serena/
+**/.omo
+.omo/
+/result
+refs
+Session.vim
+/opencode.json
+a.out
+target
+.scripts
+.cache
+.direnv/
+
+# Local dev files
+opencode-dev
+UPCOMING_CHANGELOG.md
+logs/
+*.bun-build
+tsconfig.tsbuildinfo
+
+# navegador do agente: downloads em <projeto>/.labharness/downloads
+.labharness/
+
+# artefatos de teste
+e2e-*.log
+packages/app/e2e/test-results/
+packages/app/e2e/playwright-report/
+
+# artefatos de sessão de agente (planos, worktrees, capturas do Playwright MCP)
+.plans/
+.playwright-mcp/
+.claude/worktrees/
