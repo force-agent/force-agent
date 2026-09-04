@@ -104,6 +104,46 @@ WebSocket upgrade.
 **Deterministic mode.** Under a flag, every read of the host clock inside Code
 Mode throws, so that a replay of the same program cannot diverge.
 
+## Harness — cost, speed and completion rate
+
+In active development, landing in the next release. `Agent = Model + Harness`:
+every limit below lives in deterministic code, never in prompts. Each item is
+tagged with its expected impact on **cost** (tokens/dollars), **speed**
+(steps/latency) or **quality** (task completion rate).
+
+- **Fail-fast give-up — HIGH (cost, quality).** Each step is scored with
+  verifiable signals: real file mutations and green test/lint/typecheck runs
+  reset the stall counter, unseen targets discount it, steps with zero tool
+  calls increment it. Gives up after 12 stalled steps or 3 identical tool
+  errors in a row, returning a structured summary (stall count, distinct
+  errors, files touched) instead of burning the full step allowance.
+- **One automatic retry with a hidden partner — HIGH (quality).** After a
+  top-level give-up, a hidden `<agent>-retry` is dispatched once: same model,
+  60% of the steps, failure summary as first input. Subagents never retry; a
+  second give-up ends the session.
+- **Frozen cache prefix — HIGH (cost, speed).** The base transcript keeps the
+  provider cache prefix stable across steps (no dynamic IDs or timestamps,
+  stable tool order), so repeated context keeps its cache discount.
+- **Per-session cost ceiling — MEDIUM (cost).** Opt-in `giveup.maxCostUSD`
+  aborts the run when spend hits the cap; the abort summary reports cost and
+  cache hit rate.
+- **Per-tool output caps — MEDIUM (cost).** Tight budgets (200 lines / 20 KiB)
+  for high-volume tools like shell and grep, so one verbose output stops
+  flooding every following step. Truncation is flagged, never silent.
+- **Declarative `batch` tool — MEDIUM (speed, quality).** Up to 10 planned
+  read/grep/glob/shell/edit/write calls in a single step, stopping at the
+  first failure; sub-ops outside the advertised catalog are refused with an
+  explicit error.
+- **Cache-hit instrumentation — MEDIUM (observability).** Per-call cache hits
+  are measured and surfaced, so a blown budget can be told apart from a
+  genuinely long session.
+- **`giveup.*` config section — MEDIUM (operations).** Stall/error/retry/cost
+  thresholds tunable per profile without code changes; everything off with
+  `enabled: false`.
+- **`minimal` agent preset — LOW (cost).** Cheap visible agent (shell, read,
+  edit, grep, glob; 25 steps) for simple tasks and retry duty without loading
+  the full tool catalog into context.
+
 ## Security — read before exposing
 
 **There is no agent sandbox.** Anyone who authenticates against this URL can run
